@@ -1,49 +1,58 @@
-# template-java-service
+# shipment-service
 
-Шаблон репозиторію для Java-сервіса Kite: Spring Boot 3, Java 21, образ у GHCR,
-CI з одного рядка. Із нього створюються 12 Java-сервісів (5.6).
+Накладні, місця, стейт-машина відправлення, керування доставкою, повернення і
+саги (5.1). Єдиний власник статусу відправлення: решта сервісів реагує на його
+події в `shipment.events` (5, вступ; 8.1). Створено з `template-java-service`.
 
-## Новий сервіс
+## Що вже вміє
 
-```bash
-gh repo create kite-post/shipment-service --public --template kite-post/template-java-service
-cd shipment-service
-make rename NAME=shipment-service
-git add -A && git commit -m "Перейменувати шаблон у shipment-service" && git push
-```
+`POST /api/v1/shipments` — **лише чернетка** (`"draft": true`, статус `DRAFT`):
 
-`make rename` перейменовує артефакт, пакет (`ua.kite.shipment` →
-`ua.kite.shipment`), клас застосунку, ім'я образу і базу (`shipment` — так
-вона називається на стенді). Без нього репозиторій теж збирається і проходить
-CI — просто під іменем шаблону.
+- накладна з місцями (`shipment`, `parcel`, міграція `V2`) і подія
+  `kite.shipment.created.v1` пишуться **в одній транзакції** через outbox
+  (5.4, п. 2); `OutboxPublisher` публікує її в `shipment.events` з ключем
+  `shipmentId`;
+- номер — UPU S10 з послідовності бази (`KT` + 8 цифр + контрольна + `UA`),
+  штрих-коди місць — `<номер>-01…-20` (10.1);
+- у подію замість телефонів ідуть їхні SHA-256 (`senderPhoneHash`,
+  `recipientPhoneHash`); `X-Request-Id` запиту стає `kiterequestid`;
+- JWT сервіс перевіряє сам (ті самі issuer і ключі Keycloak, що й шлюз);
+  `sub` зберігається як `created_by`.
 
-### Від шаблону до першої події
+Чого ще немає — свідомо, окремими задачами:
 
-1. `gh repo create … --template` і `make rename NAME=…` — як вище.
-2. `make run` — сервіс піднімається з власними Postgres і Kafka в контейнерах,
-   ставити нічого не треба (лише Docker).
-3. Таблиці сервіса — у `src/main/resources/db/migration/V2__….sql` і далі
-   (V1 — транспорт подій, його не чіпати). Сутності — JPA, ключі — `UuidV7.next()`.
-4. Події, які сервіс публікує: `outbox.append(...)` у тій самій транзакції,
-   що й зміна. Топік і ключ розділу візьмуться з реєстру `kite-contracts`.
-5. Події, які сервіс слухає: свій `@KafkaListener` за зразком
-   `example/ShipmentEventsListener`, а сам пакет `example` — видалити.
-6. `make verify` — те саме, що прожене CI; `git push`.
+- `"draft": false` (одразу T1) → **422** `SHIPMENT_CONFIRMATION_REQUIRES_PRICE`:
+  умова T1 — «є ціна» (7.2), а її рахує pricing-service;
+- `Idempotency-Key` обов'язковий за контрактом, але повтор поки не
+  розпізнається;
+- `senderCustomerId` у події порожній: `sub` — це користувач Keycloak, а не
+  `customer.id`; відправника треба передавати в тілі;
+- `origin` / `destination` у відповіді — лише `id` (назви знає network-service);
+- решта ендпоїнтів `ShipmentsApi` відповідають 501.
+
+Помилки — `application/problem+json` з `code` і `requestId` (9.1): 400
+`VALIDATION_FAILED` / `MALFORMED_REQUEST`, 401 без токена, 409
+`SHIPMENT_CONFLICT`, 422 — правила домену.
+
+Критерій «подія є після HTTP-запиту і її немає після відкату» перевіряє
+`ShipmentCreatedIT` на справжніх Postgres і Kafka: відкат провокується
+дублем номера, який спрацьовує вже після `outbox.append`.
 
 ## Що всередині
 
 ```
 pom.xml                   Spring Boot 3.5, Java 21, JPA, Flyway, Kafka, Spotless, Failsafe
 src/main/java
-  web/                    один ендпоїнт /api/v1/info
+  web/                    ShipmentsController, problem+json, X-Request-Id, JWT, /api/v1/info
+  shipment/               накладна, місця, номери S10, створення чернетки
   common/UuidV7           первинні ключі й id подій (6.1)
   events/                 конверт CloudEvents, реєстр подій, DLT, прибирання
   events/outbox/          запис в outbox, публікатор, метрики відставання
   events/inbox/           ідемпотентна обробка вхідних подій (processed_event)
-  example/                ПРИКЛАД споживача — замінити своїм
 src/main/resources
   application.yml         база, Kafka, actuator, Prometheus, kite.events.*
   db/migration/V1__…      таблиці outbox і processed_event
+  db/migration/V2__…      shipment, parcel, tracking_number_seq
 src/test/java             юніт-тести + *IT на Postgres і Kafka у Testcontainers
 Dockerfile                шарований образ Spring Boot на temurin-21-jre-alpine
 Makefile                  той самий набір цілей, що й у решти репозиторіїв
@@ -207,7 +216,8 @@ void on(ConsumerRecord<String, String> record) {
 - `processed_event` чиститься через `kite.events.inbox.retention` (14 діб) —
   довше за ретеншен топіків, щоб старий повтор не пройшов як новий.
 
-Робочий приклад — `example/ShipmentEventsListener`.
+Робочий приклад споживача — `example/ShipmentEventsListener` у
+`template-java-service`; у цьому сервісі споживачів поки немає.
 
 ### Тести
 

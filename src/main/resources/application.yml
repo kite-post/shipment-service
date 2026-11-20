@@ -24,6 +24,17 @@ spring:
     # V1 — транспорт подій (outbox, processed_event); таблиці сервіса — з V2.
     locations: classpath:db/migration
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Ті самі значення, що в api-gateway: iss=http://localhost:8081 (так токени бачить
+          # браузер), ключі — звідти ж локально; у compose стенд перекриває jwk-set-uri на
+          # адресу всередині мережі (SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_*).
+          issuer-uri: http://localhost:8081/realms/kite
+          jwk-set-uri: http://localhost:8081/realms/kite/protocol/openid-connect/certs
+          audiences: kite-api
+
   kafka:
     bootstrap-servers: localhost:9092
     producer:
