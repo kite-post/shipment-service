@@ -89,6 +89,10 @@ class ShipmentCreatedIT {
         assertThat(event.at("/data/draft").asBoolean()).isTrue();
         assertThat(event.at("/data/parcelCount").asInt()).isEqualTo(1);
         assertThat(event.at("/data/recipientPhoneHash").asText()).isEqualTo(PhoneHash.of("+380671112233"));
+        // Порожніх необов'язкових полів у події немає зовсім — null порушив би JSON Schema.
+        assertThat(event.get("data").has("codAmount")).isFalse();
+        assertThat(event.get("data").has("priceTotal")).isFalse();
+        assertThat(event.get("data").has("senderCustomerId")).isFalse();
         // Події не носять самих номерів.
         assertThat(records.getFirst().value()).doesNotContain("+380671112233").doesNotContain("+380501234567");
     }

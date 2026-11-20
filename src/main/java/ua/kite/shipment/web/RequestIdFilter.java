@@ -39,7 +39,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
             requestId = UUID.randomUUID().toString();
         }
         MDC.put(Outbox.REQUEST_ID_MDC_KEY, requestId);
-        response.setHeader(HEADER, requestId);
+        // Заголовок відповіді не ставимо: його вже повертає шлюз, і клієнт отримав би два.
         try {
             chain.doFilter(request, response);
         } finally {
